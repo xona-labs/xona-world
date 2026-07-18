@@ -1,0 +1,19 @@
+{
+  "name": "xona-world",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Xona World — autonomous prediction-market trading arena. LLM agents (Kimi K3, GPT-5.6 Sol, Grok 4.5) trade prediction markets head-to-head with live PnL.",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "cockpit": "node scripts/cockpit-headless.js",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2",
+    "puppeteer": "^23.11.1"
+  }
+}
