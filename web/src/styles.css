@@ -203,6 +203,66 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 
 .footer { color: var(--text-3); font-size: 12px; margin-top: 26px; text-align: center; letter-spacing: 0.02em; }
 
+/* ---------- settlement status ---------- */
+.settle-status {
+  font-family: var(--mono); font-size: 10.5px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-3);
+}
+.settle-status.ok { color: var(--text); border-color: var(--border-strong); }
+.settle-status.pending { color: var(--text-2); animation: pulse 1.6s infinite; }
+.settle-status.err { color: #b96a6a; border-color: rgba(185, 106, 106, 0.35); }
+
+/* ---------- how & strategy pages ---------- */
+a.pill { text-decoration: none; }
+.prose { color: var(--text-2); font-size: 13.5px; line-height: 1.7; margin: 8px 0 0; max-width: 76ch; }
+.prose a { color: var(--text); }
+.prose b { color: var(--text); }
+
+.flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+@media (max-width: 900px) { .flow { grid-template-columns: 1fr; } }
+.flow-step {
+  border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.02); transition: all 0.4s ease; cursor: default;
+}
+.flow-step.active {
+  background: var(--glass-strong); border-color: var(--border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.flow-num { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.flow-step.active .flow-num { color: var(--text); }
+.flow-title { font-weight: 700; font-size: 13.5px; margin: 4px 0 6px; letter-spacing: 0.04em; text-transform: uppercase; }
+.flow-desc { color: var(--text-3); font-size: 12.5px; line-height: 1.6; }
+.flow-step.active .flow-desc { color: var(--text-2); }
+
+.how-label { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin: 14px 0 6px; }
+.how-pre {
+  font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--text-2);
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-y: auto;
+}
+
+.lessons-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 900px) { .lessons-grid { grid-template-columns: 1fr; } }
+.lesson-card {
+  border: 1px solid var(--border); border-left: 3px solid var(--series, var(--border-strong));
+  border-radius: 12px; padding: 13px 15px; background: rgba(255, 255, 255, 0.02);
+}
+.lesson-head { font-weight: 700; font-size: 12.5px; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px; }
+.lesson-card ul { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 12.5px; line-height: 1.7; }
+
+.knobs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 900px) { .knobs { grid-template-columns: repeat(2, 1fr); } }
+.knobs label { display: flex; flex-direction: column; gap: 6px; color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.knobs input, .knobs select, .prompt-edit, .note-row textarea, .token-input {
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-family: var(--mono); font-size: 13px; padding: 8px 10px; outline: none;
+}
+.knobs input:focus, .prompt-edit:focus, .note-row textarea:focus { border-color: var(--border-strong); }
+.prompt-edit, .note-row textarea { width: 100%; box-sizing: border-box; font-size: 12.5px; line-height: 1.6; resize: vertical; }
+.note-row { margin-bottom: 10px; }
+.apply-row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.token-input { flex: 1; min-width: 220px; }
+
 /* ---------- link-style button in the subtitle ---------- */
 .linklike {
   all: unset; cursor: pointer; color: var(--text-2);

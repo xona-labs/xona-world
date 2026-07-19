@@ -139,6 +139,8 @@ export default function App() {
           </div>
         </div>
         <div className="header-right">
+          <a className="pill" href="/how">how it works</a>
+          <a className="pill" href="/strategy">strategy</a>
           <div className="pill">
             <span className={`dot ${boot.cycle.llmReady ? 'live' : 'warn'}`} />
             {boot.cycle.llmReady ? 'agents live' : 'agents idle'}
@@ -155,6 +157,12 @@ export default function App() {
           <div className="pill">
             live <b>{boot.live?.enabled ? `wallet $${(boot.live.balance?.usd ?? 0).toFixed(2)}` : 'OFF'}</b>
           </div>
+          {boot.live?.enabled && (
+            <div className="pill" title="The signing cockpit that settles trades on-chain">
+              <span className={`dot ${boot.live.cockpitSeenAt && now - boot.live.cockpitSeenAt < 20000 ? 'live' : 'warn'}`} />
+              signer {boot.live.cockpitSeenAt && now - boot.live.cockpitSeenAt < 20000 ? 'online' : 'OFFLINE'}
+            </div>
+          )}
           {walletAddress && boot.live?.enabled && (
             <button className="btn solid" onClick={() => setFundOpen(true)}>+ Fund</button>
           )}
@@ -324,6 +332,34 @@ export default function App() {
           </div>
         </div>
       </section>
+
+      {boot.live?.enabled && (boot.live.trades || []).length > 0 && (
+        <section className="card">
+          <h2>
+            On-chain settlement
+            <span className="muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+              wallet ${(boot.live.balance?.usd ?? 0).toFixed(2)} · every order parks at paybox, signs in the cockpit, settles on Solana
+            </span>
+          </h2>
+          <div className="table-scroll" style={{ maxHeight: 300 }}>
+            <table>
+              <thead><tr><th>Time</th><th>Model</th><th>Action</th><th>Detail</th><th className="num">USD</th><th>Status</th></tr></thead>
+              <tbody>
+                {boot.live.trades.map((t, i) => (
+                  <tr key={i}>
+                    <td className="muted" style={{ whiteSpace: 'nowrap' }}>{clock(t.ts)}</td>
+                    <td>{byId[t.agent_id] ? <AgentChip a={byId[t.agent_id]} /> : <span className="muted">{t.agent_id}</span>}</td>
+                    <td>{t.action}{t.side ? <> <span className={`side ${t.side}`}>{t.side.toUpperCase()}</span></> : null}</td>
+                    <td><div className="market-title">{t.market_title || '—'}</div></td>
+                    <td className="num">{t.usd != null ? `$${Number(t.usd).toFixed(2)}` : '—'}</td>
+                    <td><span className={`settle-status ${t.status === 'success' ? 'ok' : String(t.status).startsWith('pending') ? 'pending' : 'err'}`}>{t.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <footer className="footer">
         Xona World Arena · live on World (paybox) MCP · fills settle on Solana

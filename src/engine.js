@@ -1,6 +1,7 @@
 import { config, AGENTS } from './config.js';
 import { db } from './db.js';
 import { decide } from './llm.js';
+import { getStrategy } from './strategy.js';
 import * as limitless from './venues/paper.js';
 import * as world from './venues/world.js';
 import * as oauth from './paybox/oauth.js';
@@ -25,7 +26,14 @@ export function onBroadcast(fn) { broadcast = fn; }
 let running = false;
 let lastCycle = { startedAt: null, finishedAt: null, error: null, slateSize: 0, venue: null };
 export function cycleStatus() {
-  return { ...lastCycle, cycleSeconds: config.cycleSeconds, llmReady: !!config.openrouter.apiKey };
+  const strat = getStrategy();
+  return {
+    ...lastCycle,
+    cycleSeconds: strat.cycleSeconds,
+    workflow: strat.workflow,
+    memoryEnabled: strat.memory.enabled,
+    llmReady: !!config.openrouter.apiKey,
+  };
 }
 
 const q = {
@@ -53,8 +61,18 @@ const q = {
     VALUES (@agent_id, @position_id, @action, @market_title, @side, @shares, @price, @usd, @pnl, @reason, @ts)
   `),
   insertDecision: db.prepare(`
-    INSERT INTO decisions (agent_id, ts, summary, commentary, raw, latency_ms, error)
-    VALUES (@agent_id, @ts, @summary, @commentary, @raw, @latency_ms, @error)
+    INSERT INTO decisions (agent_id, ts, summary, commentary, raw, latency_ms, error, plan)
+    VALUES (@agent_id, @ts, @summary, @commentary, @raw, @latency_ms, @error, @plan)
+  `),
+  getLessons: db.prepare('SELECT lessons, ts FROM agent_lessons WHERE agent_id = ?'),
+  setLessons: db.prepare(`
+    INSERT INTO agent_lessons (agent_id, ts, lessons) VALUES (?, ?, ?)
+    ON CONFLICT(agent_id) DO UPDATE SET ts = excluded.ts, lessons = excluded.lessons
+  `),
+  closedSince: db.prepare(`
+    SELECT market_title, side, entry_price, exit_price, pnl, close_reason, closed_at
+    FROM positions WHERE agent_id = ? AND status IN ('closed','resolved') AND closed_at > ?
+    ORDER BY closed_at DESC LIMIT 12
   `),
   insertSnapshot: db.prepare(`
     INSERT OR REPLACE INTO equity_snapshots (agent_id, ts, equity, cash, positions_value)
@@ -62,18 +80,9 @@ const q = {
   `),
 };
 
-const SYSTEM_PROMPT = `You are an autonomous short-horizon trader in a live arena, competing head-to-head against rival AI models with equal starting capital. Your equity curve is public. Your goal: finish with more money than your rivals.
+// The system prompt lives in strategy.js (live-editable via /strategy).
 
-You trade rolling 5/15/60-minute binary markets on crypto price direction (BTC, ETH, SOL, XRP…): "price up in next N mins?" A YES share pays $1.00 if the asset closes the window UP versus the window open, NO pays $1.00 otherwise. Buying at price p risks p per share for a payout of 1. Prices are the market's implied probability; each market shows its recent YES-price path (one point per minute) — that is the market's live directional lean.
-
-How to win:
-- Read the trend path: a steadily climbing YES price means the asset is up so far in the window (momentum); a price snapping back toward 0.50 means the move faded (mean reversion). Trade the continuation or the fade — but have a reason.
-- A YES near 0.80 late in a window is usually a near-lock priced with a premium; buying it earns little. The interesting entries are mispriced 0.30–0.70 quotes where the trend path disagrees with the price.
-- The spread (~2-4¢ round trip) is your main cost. Prefer letting positions RIDE TO RESOLUTION (minutes away) over closing early — resolution pays face value with no spread. Close early only to cut a clearly broken thesis.
-- Size to survive being wrong: these are minutes-long trades, variance is high. Standard size 10-25% of your cash; up to 35% only with strong conviction. Never go all-in on one window.
-- Sitting 100% in cash every cycle is a losing strategy in an arena — a rival who finds even a small edge compounds it fast on 5-minute markets. Trade when you see something, hold when you truly don't.
-
-Respond with STRICT JSON only:
+const ACTIONS_SCHEMA = `Respond with STRICT JSON only:
 {
   "commentary": "one or two sentences on your current read",
   "actions": [
@@ -82,6 +91,80 @@ Respond with STRICT JSON only:
   ]
 }
 The actions array may be empty. Never invent slugs or position ids not shown to you.`;
+
+function systemPromptFor(strat, spec) {
+  const note = strat.agentNotes[spec.id];
+  return strat.systemPrompt + (note ? `\n\nYOUR PERSONAL DIRECTIVE\n${note}` : '');
+}
+
+function currentLessons(agentId) {
+  const row = q.getLessons.get(agentId);
+  if (!row) return [];
+  try { return JSON.parse(row.lessons) || []; } catch { return []; }
+}
+
+/**
+ * Long-term memory: when new resolutions landed since the last reflection, the
+ * agent's own model reviews them and rewrites its list of durable lessons.
+ */
+async function reflect(spec, strat) {
+  if (!strat.memory.enabled || strat.memory.maxLessons === 0) return;
+  const kvKey = `memory.lastReflect.${spec.id}`;
+  const last = db.prepare('SELECT v FROM kv WHERE k = ?').get(kvKey);
+  const lastTs = last ? JSON.parse(last.v) : 0;
+  const closed = q.closedSince.all(spec.id, lastTs);
+  if (!closed.length) return;
+
+  const lessons = currentLessons(spec.id);
+  const tradeLines = closed.map((p) =>
+    `- ${p.market_title} | ${p.side.toUpperCase()} @ ${p.entry_price} → ${p.exit_price} | pnl ${fmtUsd(p.pnl ?? 0)} | ${p.close_reason || ''}`,
+  ).join('\n');
+
+  const sys = `You are a trading agent doing a post-trade review of YOUR OWN results. Distill durable, specific lessons that will change how you trade next — not platitudes. Keep lessons that still apply, drop stale ones, add new ones. Max ${strat.memory.maxLessons} lessons, each one imperative sentence.
+Respond with STRICT JSON only: {"lessons": ["...", "..."]}`;
+  const user = `YOUR CURRENT LESSONS\n${lessons.length ? lessons.map((l) => `- ${l}`).join('\n') : '(none yet)'}\n\nNEWLY RESOLVED TRADES\n${tradeLines}\n\nRewrite the full lesson list now.`;
+
+  try {
+    const { json } = await decide(spec.model, sys, user);
+    const next = (Array.isArray(json.lessons) ? json.lessons : [])
+      .filter((l) => typeof l === 'string' && l.trim())
+      .slice(0, strat.memory.maxLessons)
+      .map((l) => l.slice(0, 240));
+    q.setLessons.run(spec.id, Date.now(), JSON.stringify(next));
+    db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v')
+      .run(kvKey, JSON.stringify(Date.now()));
+    broadcast('memory', { agentId: spec.id, lessons: next });
+  } catch (err) {
+    console.error(`[engine] reflection failed for ${spec.id}:`, err.message);
+  }
+}
+
+/**
+ * The decision workflow. 'single' = one shot. 'plan-critique' = the model
+ * first drafts candidate trades as an analyst, then re-reads its own plan as
+ * the risk desk and emits final actions. Returns { json, raw, latencyMs, plan }.
+ */
+async function decideActions(spec, strat, sysPrompt, userPrompt) {
+  if (strat.workflow !== 'plan-critique') {
+    const r = await decide(spec.model, `${sysPrompt}\n\n${ACTIONS_SCHEMA}`, userPrompt);
+    return { ...r, plan: null };
+  }
+
+  const planSys = `${sysPrompt}\n\nPHASE 1 — ANALYST. Survey the markets and draft candidate trades. Do NOT commit yet.
+Respond with STRICT JSON only: {"read": "2-3 sentences on the tape", "candidates": [{"slug": "...", "side": "yes"|"no", "usd": <amount>, "edge": "<why the price is wrong>", "confidence": "low"|"medium"|"high"}]}`;
+  const p1 = await decide(spec.model, planSys, userPrompt);
+
+  const critiqueSys = `${sysPrompt}\n\nPHASE 2 — RISK DESK. Below is your own analyst plan. Kill weak candidates (thin edge, spread-eaten, oversized, redundant exposure), resize survivors, and finalize.\n\n${ACTIONS_SCHEMA}`;
+  const critiqueUser = `${userPrompt}\n\nYOUR ANALYST PLAN\n${JSON.stringify(p1.json, null, 1)}\n\nFinalize your actions now.`;
+  const p2 = await decide(spec.model, critiqueSys, critiqueUser);
+
+  return {
+    json: p2.json,
+    raw: p2.raw,
+    latencyMs: p1.latencyMs + p2.latencyMs,
+    plan: JSON.stringify(p1.json).slice(0, 4000),
+  };
+}
 
 function fmtUsd(x) { return `$${(Math.round(x * 100) / 100).toFixed(2)}`; }
 
@@ -94,7 +177,7 @@ function fmtDuration(ms) {
   return `${Math.round(hours / 24)}d`;
 }
 
-function buildUserPrompt(agent, positions, slate, rivals) {
+function buildUserPrompt(strat, agent, positions, slate, rivals, lessons) {
   const posLines = positions.length
     ? positions.map((p) => {
         const mark = p.current_price != null ? p.current_price : p.entry_price;
@@ -112,11 +195,14 @@ function buildUserPrompt(agent, positions, slate, rivals) {
   }).join('\n');
 
   const rivalLines = rivals.map((r) => `${r.label}: ${fmtUsd(r.equity)}`).join(' | ');
+  const lessonBlock = lessons?.length
+    ? `\nLESSONS FROM YOUR PAST TRADING (you wrote these — honor them)\n${lessons.map((l) => `- ${l}`).join('\n')}\n`
+    : '';
 
   return `COMPETITION
-Your equity: ${fmtUsd(agent.equity)} (started ${fmtUsd(config.startingBankroll)})
+Your equity: ${fmtUsd(agent.equity)} (started ${fmtUsd(agent.starting_bankroll)})
 Rivals: ${rivalLines}
-
+${lessonBlock}
 PORTFOLIO
 Cash: ${fmtUsd(agent.cash)}
 Open positions:
@@ -126,8 +212,8 @@ MARKETS AVAILABLE (binary YES/NO, prices are cost per $1-payout share)
 ${marketLines}
 
 RULES
-- Max ${fmtUsd(Math.min(config.maxTradeUsd, Math.max(0.1, agent.cash * 0.35)))} per new position (35% of your cash). Max ${config.maxOpenPositions} open positions (you have ${positions.length}).
-- You may open at most 2 new positions per cycle.
+- Max ${fmtUsd(Math.min(strat.maxTradeUsd, Math.max(0.1, agent.cash * 0.35)))} per new position (35% of your cash). Max ${strat.maxOpenPositions} open positions (you have ${positions.length}).
+- You may open at most ${strat.maxOpensPerCycle} new positions per cycle.
 - Only use slugs and position_ids listed above.
 
 Decide now.`;
@@ -175,7 +261,7 @@ async function resolveAndMark(marketCache) {
   }
 }
 
-async function executeActions(agent, actions, slate, marketCache, venue) {
+async function executeActions(strat, agent, actions, slate, marketCache, venue) {
   const bySlug = new Map(slate.map((m) => [m.slug, m]));
   const executed = [];
   const liveMode = venue.name === 'world' && config.live.enabled;
@@ -184,7 +270,7 @@ async function executeActions(agent, actions, slate, marketCache, venue) {
   for (const a of Array.isArray(actions) ? actions : []) {
     try {
       if (a.type === 'open') {
-        if (opens >= 2) continue;
+        if (opens >= strat.maxOpensPerCycle) continue;
         const m = bySlug.get(a.slug);
         if (!m) continue;
         // Quotes are from cycle start; don't fill into a window that is closing.
@@ -192,8 +278,8 @@ async function executeActions(agent, actions, slate, marketCache, venue) {
         const side = a.side === 'no' ? 'no' : 'yes';
         const current = q.agent.get(agent.id);
         const openCount = q.openPositions.all(agent.id).length;
-        if (openCount >= config.maxOpenPositions) continue;
-        const usdCap = Math.min(config.maxTradeUsd, Math.max(0.1, current.cash * 0.35));
+        if (openCount >= strat.maxOpenPositions) continue;
+        const usdCap = Math.min(strat.maxTradeUsd, Math.max(0.1, current.cash * 0.35));
         const usd = Math.min(Math.max(Number(a.usd) || 0, 0.1), usdCap, current.cash);
         if (usd < 0.1) continue;
         let fill = venue.paperBuy(m, side, usd);
@@ -339,26 +425,29 @@ export async function runCycle() {
     }
 
     if (config.openrouter.apiKey && slate.length) {
+      const strat = getStrategy();
       const equities = q.agents.all().map((a) => ({ id: a.id, label: a.label, ...agentEquity(a) }));
       await Promise.all(AGENTS.map(async (spec) => {
         const agent = q.agent.get(spec.id);
         if (agent.paused) return; // benched: no decisions, positions still resolve
+        // Memory first: fold any new resolutions into lessons before deciding.
+        await reflect(spec, strat).catch(() => {});
         const positions = q.openPositions.all(spec.id);
         const me = equities.find((e) => e.id === spec.id);
         const rivals = equities.filter((e) => e.id !== spec.id);
         const ts = Date.now();
         try {
-          const { json, raw, latencyMs } = await decide(
-            spec.model,
-            SYSTEM_PROMPT,
-            buildUserPrompt({ ...agent, equity: me.equity }, positions, slate, rivals),
+          const sysPrompt = systemPromptFor(strat, spec);
+          const userPrompt = buildUserPrompt(
+            strat, { ...agent, equity: me.equity }, positions, slate, rivals, currentLessons(spec.id),
           );
-          const executed = await executeActions(agent, json.actions, slate, marketCache, venue);
+          const { json, raw, latencyMs, plan } = await decideActions(spec, strat, sysPrompt, userPrompt);
+          const executed = await executeActions(strat, agent, json.actions, slate, marketCache, venue);
           const summary = executed.length ? executed.join(' | ') : 'hold';
-          q.insertDecision.run({ agent_id: spec.id, ts, summary, commentary: String(json.commentary || '').slice(0, 600), raw: raw.slice(0, 4000), latency_ms: latencyMs, error: null });
+          q.insertDecision.run({ agent_id: spec.id, ts, summary, commentary: String(json.commentary || '').slice(0, 600), raw: raw.slice(0, 4000), latency_ms: latencyMs, error: null, plan });
           broadcast('decision', { agentId: spec.id, summary, commentary: json.commentary, latencyMs });
         } catch (err) {
-          q.insertDecision.run({ agent_id: spec.id, ts, summary: null, commentary: null, raw: null, latency_ms: null, error: err.message.slice(0, 500) });
+          q.insertDecision.run({ agent_id: spec.id, ts, summary: null, commentary: null, raw: null, latency_ms: null, error: err.message.slice(0, 500), plan: null });
           broadcast('decision', { agentId: spec.id, error: err.message });
         }
       }));
@@ -376,6 +465,10 @@ export async function runCycle() {
 }
 
 export function startLoop() {
-  runCycle();
-  setInterval(runCycle, config.cycleSeconds * 1000);
+  // Self-scheduling so cycle-time edits on /strategy apply without a restart.
+  const tick = async () => {
+    await runCycle();
+    setTimeout(tick, getStrategy().cycleSeconds * 1000);
+  };
+  tick();
 }

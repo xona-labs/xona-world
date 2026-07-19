@@ -105,6 +105,19 @@ const agentCols = db.prepare("PRAGMA table_info(agents)").all().map((c) => c.nam
 if (!agentCols.includes('paused')) {
   db.exec('ALTER TABLE agents ADD COLUMN paused INTEGER NOT NULL DEFAULT 0');
 }
+const decisionCols = db.prepare("PRAGMA table_info(decisions)").all().map((c) => c.name);
+if (!decisionCols.includes('plan')) {
+  db.exec('ALTER TABLE decisions ADD COLUMN plan TEXT'); // analyst step of plan-critique
+}
+
+// Long-term memory: each agent's current distilled lessons (JSON array).
+db.exec(`
+CREATE TABLE IF NOT EXISTS agent_lessons (
+  agent_id TEXT PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  lessons TEXT NOT NULL
+);
+`);
 
 // Seed agents (idempotent; never resets an existing agent's cash).
 const insertAgent = db.prepare(`

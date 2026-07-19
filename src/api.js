@@ -2,8 +2,9 @@ import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
 import { config, AGENTS } from './config.js';
-import { db } from './db.js';
+import { db, kv } from './db.js';
 import { cycleStatus, onBroadcast, runCycle } from './engine.js';
+import { getStrategy, setStrategy, strategyDefaults } from './strategy.js';
 import * as oauth from './paybox/oauth.js';
 import * as mcp from './paybox/mcp.js';
 import * as live from './paybox/live.js';
@@ -78,9 +79,68 @@ export function createApp() {
         tradeUsd: config.live.tradeUsd,
         balance: live.cachedBalance(),
         wallet: live.cachedWallet(),
-        trades: db.prepare('SELECT ts, agent_id, action, market_title, side, usd, status FROM live_trades ORDER BY ts DESC LIMIT 20').all(),
+        cockpitSeenAt: kv.get('cockpit.lastSeen') || null,
+        trades: db.prepare('SELECT ts, agent_id, action, market_title, side, usd, status FROM live_trades ORDER BY ts DESC LIMIT 25').all(),
       },
       config: { cycleSeconds: config.cycleSeconds, startingBankroll: config.startingBankroll },
+    });
+  });
+
+  // ---- Strategy (live-tweakable) ------------------------------------------
+  app.get('/api/strategy', (req, res) => {
+    res.json({ strategy: getStrategy(), defaults: strategyDefaults() });
+  });
+
+  // Writing the strategy changes how real money trades — same gate as the
+  // cockpit on public deploys (no-op locally when COCKPIT_TOKEN is unset).
+  app.put('/api/strategy', (req, res, next) => next(), (req, res) => {
+    const token = process.env.COCKPIT_TOKEN || '';
+    const presented = req.query.token || req.get('x-cockpit-token');
+    if (token && presented !== token) return res.status(401).json({ error: 'token required' });
+    try {
+      res.json({ strategy: setStrategy(req.body || {}) });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // ---- How-it-works page data ---------------------------------------------
+  app.get('/api/how', (req, res) => {
+    const strategy = getStrategy();
+    const agents = db.prepare('SELECT id, label, vendor, model, color, paused, cash, starting_bankroll FROM agents').all();
+    const lessons = {};
+    for (const a of agents) {
+      const row = db.prepare('SELECT lessons, ts FROM agent_lessons WHERE agent_id = ?').get(a.id);
+      lessons[a.id] = row ? { lessons: safeParse(row.lessons) || [], ts: row.ts } : { lessons: [], ts: null };
+    }
+    // Freshest decision that has a plan (the analyst step) for the live example.
+    const example = db.prepare(`
+      SELECT agent_id, ts, summary, commentary, plan, latency_ms FROM decisions
+      WHERE error IS NULL AND plan IS NOT NULL ORDER BY ts DESC LIMIT 1
+    `).get() || db.prepare(`
+      SELECT agent_id, ts, summary, commentary, plan, latency_ms FROM decisions
+      WHERE error IS NULL ORDER BY ts DESC LIMIT 1
+    `).get() || null;
+    if (example) example.plan = safeParse(example.plan);
+    const recentLive = db.prepare(`
+      SELECT agent_id, action, side, usd, status, market_title, ts FROM live_trades
+      WHERE status = 'success' ORDER BY ts DESC LIMIT 5
+    `).all();
+    res.json({
+      strategy: {
+        workflow: strategy.workflow,
+        memory: strategy.memory,
+        cycleSeconds: strategy.cycleSeconds,
+        maxTradeUsd: strategy.maxTradeUsd,
+        maxOpenPositions: strategy.maxOpenPositions,
+        maxOpensPerCycle: strategy.maxOpensPerCycle,
+        systemPrompt: strategy.systemPrompt,
+      },
+      agents,
+      lessons,
+      example,
+      recentLive,
+      cycle: cycleStatus(),
     });
   });
 
@@ -213,6 +273,7 @@ export function createApp() {
   });
 
   app.get('/api/cockpit/pending', (req, res) => {
+    kv.set('cockpit.lastSeen', Date.now()); // signer heartbeat for the dashboard
     const rows = db.prepare(`
       SELECT id, request_id, agent_id, market_title, side, usd, status, raw, ts
       FROM live_trades
