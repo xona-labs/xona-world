@@ -25,6 +25,7 @@ export default function App() {
   const [feed, setFeed] = useState([]);
   const [tab, setTab] = useState('open');
   const [fundOpen, setFundOpen] = useState(false);
+  const [signerOn, setSignerOn] = useState(false);
   const [now, setNow] = useState(Date.now());
   const refetchTimer = useRef(null);
 
@@ -334,29 +335,42 @@ export default function App() {
       </section>
 
       {boot.live?.enabled && (boot.live.trades || []).length > 0 && (
-        <section className="card">
-          <h2>
-            On-chain settlement
-            <span className="muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
-              wallet ${(boot.live.balance?.usd ?? 0).toFixed(2)} · every order parks at paybox, signs in the cockpit, settles on Solana
-            </span>
-          </h2>
-          <div className="table-scroll" style={{ maxHeight: 300 }}>
-            <table>
-              <thead><tr><th>Time</th><th>Model</th><th>Action</th><th>Detail</th><th className="num">USD</th><th>Status</th></tr></thead>
-              <tbody>
-                {boot.live.trades.map((t, i) => (
-                  <tr key={i}>
-                    <td className="muted" style={{ whiteSpace: 'nowrap' }}>{clock(t.ts)}</td>
-                    <td>{byId[t.agent_id] ? <AgentChip a={byId[t.agent_id]} /> : <span className="muted">{t.agent_id}</span>}</td>
-                    <td>{t.action}{t.side ? <> <span className={`side ${t.side}`}>{t.side.toUpperCase()}</span></> : null}</td>
-                    <td><div className="market-title">{t.market_title || '—'}</div></td>
-                    <td className="num">{t.usd != null ? `$${Number(t.usd).toFixed(2)}` : '—'}</td>
-                    <td><span className={`settle-status ${t.status === 'success' ? 'ok' : String(t.status).startsWith('pending') ? 'pending' : 'err'}`}>{t.status}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <section className="columns settle-cols">
+          <div className="card">
+            <h2>
+              On-chain settlement
+              <span className="muted" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                wallet ${(boot.live.balance?.usd ?? 0).toFixed(2)} · park → sign → settle on Solana
+              </span>
+            </h2>
+            <div className="table-scroll" style={{ maxHeight: 360 }}>
+              <table>
+                <thead><tr><th>Time</th><th>Model</th><th>Action</th><th>Detail</th><th className="num">USD</th><th>Status</th></tr></thead>
+                <tbody>
+                  {boot.live.trades.map((t, i) => (
+                    <tr key={i}>
+                      <td className="muted" style={{ whiteSpace: 'nowrap' }}>{clock(t.ts)}</td>
+                      <td>{byId[t.agent_id] ? <AgentChip a={byId[t.agent_id]} /> : <span className="muted">{t.agent_id}</span>}</td>
+                      <td>{t.action}{t.side ? <> <span className={`side ${t.side}`}>{t.side.toUpperCase()}</span></> : null}</td>
+                      <td><div className="market-title">{t.market_title || '—'}</div></td>
+                      <td className="num">{t.usd != null ? `$${Number(t.usd).toFixed(2)}` : '—'}</td>
+                      <td><span className={`settle-status ${t.status === 'success' ? 'ok' : String(t.status).startsWith('pending') ? 'pending' : 'err'}`}>{t.status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2>
+              Live signer
+              <button className="linklike" onClick={() => setSignerOn((v) => !v)}>{signerOn ? 'hide' : 'show'}</button>
+            </h2>
+            <div className="sub-note">World's own signing window, live. When shown, this tab signs — stop the headless cockpit to avoid two signers.</div>
+            {signerOn
+              ? <iframe className="signer-frame" title="Live signer" src="/cockpit?embed=1" />
+              : <div className="signer-off">signer hidden · click <b>show</b> to sign &amp; record here</div>}
           </div>
         </section>
       )}

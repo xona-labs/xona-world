@@ -272,15 +272,27 @@ export function createApp() {
     }
   });
 
+  // A single-signer lease so multiple open cockpits (headless + the embedded
+  // dashboard signer) never race to sign the same trade. The first instance to
+  // poll holds the lease; it's released if that instance goes quiet for 12s.
+  const LEASE_MS = 12_000;
   app.get('/api/cockpit/pending', (req, res) => {
-    kv.set('cockpit.lastSeen', Date.now()); // signer heartbeat for the dashboard
-    const rows = db.prepare(`
+    const now = Date.now();
+    kv.set('cockpit.lastSeen', now); // heartbeat for the dashboard indicator
+    const inst = String(req.query.inst || '');
+    let lease = kv.get('cockpit.lease');
+    if (!lease || now - lease.ts > LEASE_MS || lease.inst === inst) {
+      lease = { inst: inst || lease?.inst || 'default', ts: now };
+      kv.set('cockpit.lease', lease);
+    }
+    const active = !inst || lease.inst === inst; // no inst → legacy client, always active
+    const rows = active ? db.prepare(`
       SELECT id, request_id, agent_id, market_title, side, usd, status, raw, ts
       FROM live_trades
       WHERE status LIKE 'pending%' AND request_id IS NOT NULL AND ts > ?
       ORDER BY ts ASC
-    `).all(Date.now() - 4 * 60_000);
-    res.json({ pending: rows.map((r) => ({ ...r, raw: undefined, op: safeParse(r.raw) })) });
+    `).all(now - 4 * 60_000) : [];
+    res.json({ active, pending: rows.map((r) => ({ ...r, raw: undefined, op: safeParse(r.raw) })) });
   });
 
   // The paybox-issued signing key, parsed for the in-browser signing app.

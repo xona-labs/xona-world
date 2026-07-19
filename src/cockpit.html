@@ -21,12 +21,29 @@
   #log { font:11.5px/1.6 ui-monospace,Menlo,monospace; color:var(--text3); max-height:240px; overflow-y:auto; white-space:pre-wrap; }
   #log .err { color:#c96b6b; }
   #log .ok { color:#e8e8e8; }
+
+  /* Embedded / recording mode: single column, no chrome, fits a dashboard column. */
+  body.embed { background:transparent; }
+  body.embed .shell { padding:0; max-width:none; }
+  body.embed h1, body.embed #head-card, body.embed #log-card { display:none; }
+  body.embed .card { background:transparent; border:0; padding:0; margin:0; backdrop-filter:none; }
+  body.embed .slots { grid-template-columns:1fr; gap:10px; }
+  body.embed .slot { min-height:0; }
+  body.embed .slot iframe, body.embed .slot .idle { height:300px; }
+  body.embed .slot .idle { color:var(--text3); font-size:12px; border-radius:12px; }
+  .mini-status { display:none; }
+  body.embed .mini-status {
+    display:flex; gap:8px; align-items:center; font:11px ui-monospace,Menlo,monospace;
+    color:var(--text3); margin-bottom:10px;
+  }
+  body.embed .mini-status b { color:var(--text); }
+  body.embed .mini-status .dot { width:6px; height:6px; border-radius:50%; background:#3ad07a; box-shadow:0 0 7px #3ad07a; }
 </style>
 </head>
 <body>
 <div class="shell">
   <h1>XONA <span>WORLD</span> — signing cockpit</h1>
-  <div class="card">
+  <div class="card" id="head-card">
     <div class="row">
       <span class="pill">key <b id="key-state">loading…</b></span>
       <span class="pill">queue <b id="queue-state">0</b></span>
@@ -37,11 +54,16 @@
       Keep this tab open and in the foreground. Trades sign in parallel across the three slots below — nothing to click.
     </p>
   </div>
+  <div class="mini-status">
+    <span class="dot"></span> live signer · <b id="done-state-2">0</b> signed · <b id="queue-state-2">0</b> queued
+  </div>
   <div class="card"><div class="slots" id="slots"></div></div>
-  <div class="card"><div id="log"></div></div>
+  <div class="card" id="log-card"><div id="log"></div></div>
 </div>
 <script>
-const SLOT_COUNT = 3;
+const EMBED = new URLSearchParams(location.search).get('embed') === '1';
+if (EMBED) document.body.classList.add('embed');
+const SLOT_COUNT = EMBED ? 2 : 3; // narrower column in embed mode
 const MAX_AGE_MS = 3 * 60_000; // don't bother signing stale parks
 const logEl = document.getElementById('log');
 const state = { queue: [], seen: new Set(), done: 0, fail: 0 };
@@ -53,7 +75,12 @@ function log(msg, cls) {
   logEl.prepend(line);
   while (logEl.childNodes.length > 250) logEl.removeChild(logEl.lastChild);
 }
-function setPill(id, v) { document.getElementById(id).textContent = v; }
+function setPill(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+  const mirror = document.getElementById(id + '-2'); // embed mini-status mirror
+  if (mirror) mirror.textContent = v;
+}
 function report(text) {
   fetch('/api/cockpit/report', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -157,10 +184,16 @@ window.addEventListener('message', async (ev) => {
 });
 
 // ---- queue + supervision ---------------------------------------------------
+// A per-tab id + server lease means only ONE open cockpit signs at a time.
+const INSTANCE_ID = `${EMBED ? 'embed' : 'cockpit'}-${Math.random().toString(36).slice(2, 10)}`;
+let hasLease = true;
+
 async function pollPending() {
   try {
-    const r = await fetch('/api/cockpit/pending');
-    const { pending } = await r.json();
+    const r = await fetch(`/api/cockpit/pending?inst=${encodeURIComponent(INSTANCE_ID)}`);
+    const { pending, active } = await r.json();
+    hasLease = active !== false;
+    if (!hasLease) { setPill('queue-state', '·'); return; } // another signer holds the lease
     for (const p of pending) {
       if (!state.seen.has(p.request_id) && p.op?.refresh_url) {
         state.seen.add(p.request_id);
@@ -206,6 +239,7 @@ async function runSlot(slot, request) {
 }
 
 setInterval(() => {
+  if (!hasLease) return; // only the lease-holder signs
   for (const slot of slots) {
     if (slot.request) continue;
     let next;
