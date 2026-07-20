@@ -231,6 +231,10 @@ export default function App() {
         />
       </section>
 
+      {boot.performance && (
+        <PerformancePanel perf={boot.performance} byId={byId} />
+      )}
+
       <section className="columns">
         <div className="card">
           <h2>
@@ -450,6 +454,78 @@ function FundModal({ wallet, balance, onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function PerformancePanel({ perf, byId }) {
+  const pctOrDash = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+  const wins = ['5-min', '15-min', '60-min'].filter((w) => perf.byWindow[w]);
+  const s = perf.settlement;
+  const traded = perf.perAgent.filter((a) => a.trades > 0);
+
+  return (
+    <section className="card">
+      <h2>Performance <span className="muted">— realized results, not paper marks</span></h2>
+
+      <div className="perf-grid">
+        {(traded.length ? traded : perf.perAgent).map((a) => {
+          const dir = a.realized > 0.005 ? 'up' : a.realized < -0.005 ? 'down' : 'flat';
+          return (
+            <div className="perf-card" key={a.id} style={{ '--series': byId[a.id]?.color || a.color }}>
+              <div className="perf-name">{a.label}{a.paused ? <span className="muted"> · paused</span> : ''}</div>
+              <div className="perf-big">
+                <span className={`pnl ${dir}`}>{a.realized >= 0 ? '+' : ''}{usd(a.realized)}</span>
+                <span className="muted"> realized</span>
+              </div>
+              <div className="perf-row">
+                <span>win rate<b>{pctOrDash(a.winRate)}</b></span>
+                <span>record<b>{a.wins}W–{a.losses}L</b></span>
+                <span>ROI<b className={a.roi >= 0 ? 'up' : 'down'}>{a.roi >= 0 ? '+' : ''}{Math.round(a.roi * 100)}%</b></span>
+              </div>
+              <div className="perf-row sub">
+                <span>avg win<b className="up">+{usd(a.avgWin)}</b></span>
+                <span>avg loss<b className="down">{usd(a.avgLoss)}</b></span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="perf-split">
+        <div>
+          <div className="perf-subhead">By market window <span className="muted">— which windows actually pay</span></div>
+          <table className="perf-table">
+            <thead><tr><th>Window</th><th className="num">Trades</th><th className="num">Win %</th><th className="num">Net PnL</th><th className="num">Signed</th></tr></thead>
+            <tbody>
+              {wins.map((w) => {
+                const d = perf.byWindow[w];
+                const st = s.byWindow[w] || { success: 0, error: 0 };
+                const signRate = st.success + st.error ? Math.round((st.success / (st.success + st.error)) * 100) : null;
+                return (
+                  <tr key={w}>
+                    <td>{w}</td>
+                    <td className="num">{d.n}</td>
+                    <td className="num">{d.n ? Math.round((d.wins / d.n) * 100) : 0}%</td>
+                    <td className={`num pnl ${d.pnl >= 0 ? 'up' : 'down'}`}>{d.pnl >= 0 ? '+' : ''}{usd(d.pnl)}</td>
+                    <td className="num muted">{signRate == null ? '—' : `${signRate}%`}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="settle-summary">
+          <div className="perf-subhead">On-chain settlement</div>
+          <div className="settle-big">{pctOrDash(s.rate)}<span className="muted"> signed</span></div>
+          <div className="perf-row sub">
+            <span>settled<b className="up">{s.success}</b></span>
+            <span>failed<b className="down">{s.failed}</b></span>
+            <span>pending<b>{s.pending}</b></span>
+          </div>
+          <div className="sub-note">failures are mostly windows that expired before signing — nothing spent.</div>
+        </div>
+      </div>
+    </section>
   );
 }
 

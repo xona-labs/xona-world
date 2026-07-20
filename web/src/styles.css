@@ -203,6 +203,33 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 
 .footer { color: var(--text-3); font-size: 12px; margin-top: 26px; text-align: center; letter-spacing: 0.02em; }
 
+/* ---------- performance ---------- */
+.perf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 4px 0 16px; }
+@media (max-width: 900px) { .perf-grid { grid-template-columns: 1fr; } }
+.perf-card {
+  border: 1px solid var(--border); border-left: 3px solid var(--series, var(--border-strong));
+  border-radius: 12px; padding: 13px 15px; background: rgba(255, 255, 255, 0.02);
+}
+.perf-name { font-weight: 700; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
+.perf-big { font-family: var(--mono); font-size: 22px; font-weight: 700; margin: 8px 0 10px; }
+.perf-big .muted { font-size: 12px; font-weight: 400; }
+.perf-row { display: flex; gap: 16px; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.perf-row.sub { margin-top: 8px; }
+.perf-row span { display: flex; flex-direction: column; gap: 3px; }
+.perf-row b { color: var(--text); font-family: var(--mono); font-size: 13px; letter-spacing: 0; }
+.perf-row b.up, .perf-big .pnl.up { color: var(--up); }
+.perf-row b.down, .perf-big .pnl.down { color: var(--down); }
+.perf-big .pnl.flat { color: var(--text-2); }
+
+.perf-split { display: grid; grid-template-columns: 1.7fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .perf-split { grid-template-columns: 1fr; } }
+.perf-subhead { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); margin-bottom: 8px; }
+.perf-table { width: 100%; }
+.perf-table td, .perf-table th { padding: 6px 8px; }
+.settle-summary { border-left: 1px solid var(--border); padding-left: 16px; }
+.settle-big { font-family: var(--mono); font-size: 26px; font-weight: 700; margin: 2px 0 10px; }
+.settle-big .muted { font-size: 12px; font-weight: 400; }
+
 /* ---------- settlement + live signer ---------- */
 .settle-cols { align-items: stretch; }
 .signer-frame {

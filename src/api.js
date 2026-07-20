@@ -13,6 +13,78 @@ function safeParse(text) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
+function windowOf(title) {
+  const t = String(title || '');
+  if (/\b5 min/.test(t)) return '5-min';
+  if (/\b15 min/.test(t)) return '15-min';
+  if (/\b60 min/.test(t)) return '60-min';
+  return 'other';
+}
+
+/**
+ * Legible performance stats for the dashboard: per-model win rate / realized
+ * PnL / ROI, win rate by market window (is 5/15/60-min actually working?), and
+ * the on-chain settlement success rate (how many orders actually fill).
+ */
+function buildPerformance() {
+  const agentRows = db.prepare('SELECT id, label, color, cash, starting_bankroll, paused FROM agents').all();
+  const perAgent = agentRows.map((a) => {
+    const closed = db.prepare("SELECT pnl, cost FROM positions WHERE agent_id = ? AND status IN ('closed','resolved')").all(a.id);
+    const wins = closed.filter((p) => p.pnl > 0);
+    const losses = closed.filter((p) => p.pnl <= 0);
+    const realized = closed.reduce((s, p) => s + (p.pnl || 0), 0);
+    const open = db.prepare("SELECT shares, current_price, entry_price FROM positions WHERE agent_id = ? AND status = 'open'").all(a.id);
+    const posValue = open.reduce((s, p) => s + p.shares * (p.current_price ?? p.entry_price), 0);
+    const equity = a.cash + posValue;
+    return {
+      id: a.id, label: a.label, color: a.color, paused: !!a.paused,
+      equity, startingBankroll: a.starting_bankroll,
+      roi: a.starting_bankroll > 0 ? equity / a.starting_bankroll - 1 : 0,
+      realized,
+      trades: closed.length,
+      wins: wins.length,
+      losses: losses.length,
+      winRate: closed.length ? wins.length / closed.length : null,
+      avgWin: wins.length ? wins.reduce((s, p) => s + p.pnl, 0) / wins.length : 0,
+      avgLoss: losses.length ? losses.reduce((s, p) => s + p.pnl, 0) / losses.length : 0,
+    };
+  });
+
+  const byWindow = {};
+  for (const p of db.prepare("SELECT market_title, pnl FROM positions WHERE status IN ('closed','resolved')").all()) {
+    const w = windowOf(p.market_title);
+    (byWindow[w] ||= { n: 0, wins: 0, pnl: 0 });
+    byWindow[w].n += 1;
+    if (p.pnl > 0) byWindow[w].wins += 1;
+    byWindow[w].pnl += p.pnl || 0;
+  }
+
+  const settleRows = db.prepare("SELECT status FROM live_trades WHERE action = 'buy'").all();
+  const settled = settleRows.filter((r) => r.status === 'success').length;
+  const failed = settleRows.filter((r) => r.status === 'error').length;
+  const pendingBuys = settleRows.filter((r) => String(r.status).startsWith('pending')).length;
+
+  const byWindowSettle = {};
+  for (const r of db.prepare("SELECT market_title, status FROM live_trades WHERE action = 'buy'").all()) {
+    const w = windowOf(r.market_title);
+    (byWindowSettle[w] ||= { success: 0, error: 0 });
+    if (r.status === 'success') byWindowSettle[w].success += 1;
+    else if (r.status === 'error') byWindowSettle[w].error += 1;
+  }
+
+  return {
+    perAgent,
+    byWindow,
+    settlement: {
+      success: settled,
+      failed,
+      pending: pendingBuys,
+      rate: settled + failed ? settled / (settled + failed) : null,
+      byWindow: byWindowSettle,
+    },
+  };
+}
+
 export function createApp() {
   const app = express();
   app.use(express.json());
@@ -64,6 +136,7 @@ export function createApp() {
     const trades = db.prepare('SELECT * FROM trades ORDER BY ts DESC LIMIT 60').all();
     const decisions = db.prepare('SELECT * FROM decisions ORDER BY ts DESC LIMIT 30').all();
     const closed = db.prepare("SELECT * FROM positions WHERE status IN ('closed','resolved') ORDER BY closed_at DESC LIMIT 40").all();
+    const performance = buildPerformance();
 
     res.json({
       agents,
@@ -72,6 +145,7 @@ export function createApp() {
       trades,
       decisions,
       closedPositions: closed,
+      performance,
       cycle: cycleStatus(),
       paybox: { connected: oauth.isConnected(), tools: mcp.cachedTools()?.map((t) => t.name) || null },
       live: {
