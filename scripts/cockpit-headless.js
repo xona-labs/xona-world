@@ -28,7 +28,11 @@ async function run() {
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60_000 });
   console.log(`[cockpit-headless] open: ${base}`);
 
-  // Watchdog: reload if the page stops updating its heartbeat.
+  // Watchdog: reload on a stale heartbeat, and — critically — fully relaunch
+  // Chrome when it hits a region block. A VPN/network flip pins the browser to
+  // the old egress IP, so a mere reload won't clear it; only a fresh process
+  // picks up the new route. This self-heals the "pending pile-up" symptom.
+  let regionStrikes = 0;
   setInterval(async () => {
     try {
       const beat = await page.evaluate(() => window.__cockpitBeat || 0);
@@ -36,13 +40,30 @@ async function run() {
         console.error('[cockpit-headless] heartbeat stale, reloading');
         await page.reload({ waitUntil: 'networkidle2', timeout: 60_000 });
       }
+      const blocked = await page.evaluate(() =>
+        /not available in region/i.test(document.body?.innerText || ''));
+      if (blocked) {
+        regionStrikes += 1;
+        console.error(`[cockpit-headless] region block detected (${regionStrikes}/2) — turn VPN off / non-US`);
+        if (regionStrikes >= 2) {
+          console.error('[cockpit-headless] relaunching Chrome to pick up current network');
+          regionStrikes = 0;
+          await browser.close().catch(() => {});
+          return; // 'disconnected' handler relaunches
+        }
+      } else {
+        regionStrikes = 0;
+      }
     } catch (err) {
       console.error(`[cockpit-headless] watchdog: ${err.message}`);
     }
   }, 30_000);
 
+  let relaunching = false;
   browser.on('disconnected', () => {
-    console.error('[cockpit-headless] browser died, restarting in 5s');
+    if (relaunching) return;
+    relaunching = true;
+    console.error('[cockpit-headless] browser gone, restarting in 5s');
     setTimeout(() => run().catch(fatal), 5_000);
   });
 }
