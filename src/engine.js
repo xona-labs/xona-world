@@ -32,7 +32,7 @@ export function cycleStatus() {
     cycleSeconds: strat.cycleSeconds,
     workflow: strat.workflow,
     memoryEnabled: strat.memory.enabled,
-    llmReady: !!config.openrouter.apiKey,
+    llmReady: !!config.inference.apiKey,
   };
 }
 
@@ -424,7 +424,7 @@ export async function runCycle() {
       await detectDeposit().catch((err) => console.error('[engine] deposit check failed:', err.message));
     }
 
-    if (config.openrouter.apiKey && slate.length) {
+    if (config.inference.apiKey && slate.length) {
       const strat = getStrategy();
       const equities = q.agents.all().map((a) => ({ id: a.id, label: a.label, ...agentEquity(a) }));
       await Promise.all(AGENTS.map(async (spec) => {

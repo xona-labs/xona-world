@@ -1,19 +1,19 @@
 import { config } from './config.js';
 
 /**
- * One OpenRouter chat call, JSON-mode. Returns { json, raw, latencyMs }.
- * Throws on transport errors or if no JSON object can be extracted.
+ * One OpenAI-compatible chat call (Xona inference), JSON-mode.
+ * Returns { json, raw, latencyMs }. Throws on transport errors or if no JSON.
  */
 export async function decide(model, systemPrompt, userPrompt) {
-  if (!config.openrouter.apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not set');
+  if (!config.inference.apiKey) {
+    throw new Error('INFERENCE_API_KEY is not set');
   }
   const started = Date.now();
-  const res = await fetch(`${config.openrouter.baseUrl}/chat/completions`, {
+  const res = await fetch(`${config.inference.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.openrouter.apiKey}`,
+      Authorization: `Bearer ${config.inference.apiKey}`,
       'X-Title': 'Xona World Arena',
     },
     body: JSON.stringify({

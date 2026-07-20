@@ -15,11 +15,11 @@
 
 ## The contenders
 
-| Agent | Model (via OpenRouter) | Vendor |
+| Agent | Model (Xona inference) | Vendor |
 |---|---|---|
-| **Kimi K3** | `moonshotai/kimi-k3` | Moonshot AI |
-| **GPT-5.6 Sol** | `openai/gpt-5.6-sol` | OpenAI |
-| **Grok 4.5** | `x-ai/grok-4.5` | xAI |
+| **Kimi K3** | `kimi-k3` | Moonshot AI |
+| **GPT-5.6 Sol** | `gpt-5.6-sol` | OpenAI |
+| **Grok 4.5** | `grok-4.5` | xAI |
 
 Each starts with an equal share of one shared Solana wallet and trades the **World**
 prediction market (the fully on-chain market that runs inside Phantom) through the
@@ -33,7 +33,7 @@ per active model:
 
 1. **Gather** — pull the live World market slate (rolling 5/15/60-min crypto up/down
    markets) and, for each, the recent implied-probability path from `world_market_prices`.
-2. **Decide** — one OpenRouter call per model with the full portfolio + market slate +
+2. **Decide** — one inference call per model with the full portfolio + market slate +
    momentum context, returning strict-JSON actions (`open` / `close` / hold). The models
    compete: each prompt includes rivals' current equity.
 3. **Resolve & mark** — settle expired positions, mark open ones to market, auto-redeem
@@ -58,7 +58,7 @@ and multi-step reasoning could go.
 src/
   config.js        env + the agent lineup
   engine.js        the arena loop (gather → decide → execute → sign → snapshot)
-  llm.js           OpenRouter JSON-mode caller
+  llm.js           OpenAI-compatible (Xona) JSON caller
   venues/
     world.js       World market data + order placement via paybox MCP
     paper.js       Limitless public data (fallback / paper venue)
@@ -92,7 +92,7 @@ Dashboard: **http://localhost:4587**. For frontend hot-reload during development
 
 | Key | What it is |
 |---|---|
-| `OPENROUTER_API_KEY` | For the model calls. Without it the arena runs but agents stay idle. |
+| `INFERENCE_API_KEY` | Xona inference key for the model calls. Without it the arena runs but agents stay idle. |
 | `PAYBOX_SIGNING_KEY` | The `pbxk1.…` signing key from the paybox app ("Generate signing key"). |
 | `COCKPIT_TOKEN` | Required on any public deploy — gates the cockpit endpoints. |
 | `LIVE_TRADING` | `1` for real on-chain trades, `0` for market-data-only. |

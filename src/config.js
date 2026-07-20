@@ -29,10 +29,11 @@ export const config = {
   maxTradeUsd: parseFloat(process.env.MAX_TRADE_USD || '150'),
   maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || '6', 10),
 
-  // LLM
-  openrouter: {
-    baseUrl: (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, ''),
-    apiKey: process.env.OPENROUTER_API_KEY || '',
+  // LLM — OpenAI-compatible inference (Xona by default; any /v1 endpoint works).
+  // INFERENCE_* is preferred; OPENROUTER_* kept as a fallback for older setups.
+  inference: {
+    baseUrl: (process.env.INFERENCE_BASE_URL || process.env.OPENROUTER_BASE_URL || 'https://api.xona-agent.com/v1').replace(/\/$/, ''),
+    apiKey: process.env.INFERENCE_API_KEY || process.env.OPENROUTER_API_KEY || '',
   },
 
   // Market data (paper venue)
@@ -62,7 +63,7 @@ export const AGENTS = [
     id: 'kimi-k3',
     label: 'Kimi K3',
     vendor: 'Moonshot AI',
-    model: 'moonshotai/kimi-k3',
+    model: 'kimi-k3',
     color: '#f5f5f5',
     dash: 'solid',
   },
@@ -70,7 +71,7 @@ export const AGENTS = [
     id: 'gpt-5.6-sol',
     label: 'GPT-5.6 Sol',
     vendor: 'OpenAI',
-    model: 'openai/gpt-5.6-sol',
+    model: 'gpt-5.6-sol',
     color: '#b0b0b0',
     dash: 'dashed',
   },
@@ -78,7 +79,7 @@ export const AGENTS = [
     id: 'grok-4.5',
     label: 'Grok 4.5',
     vendor: 'xAI',
-    model: 'x-ai/grok-4.5',
+    model: 'grok-4.5',
     color: '#6f6f6f',
     dash: 'dotted',
   },
