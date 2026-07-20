@@ -376,12 +376,16 @@ async function detectDeposit() {
   const ledgerCash = q.agents.all().reduce((s, a) => s + a.cash, 0);
   const surplus = bal - ledgerCash;
   if (surplus < DEPOSIT_THRESHOLD_USD) return;
-  const share = Math.floor((surplus / AGENTS.length) * 100) / 100;
+  // Deposits fund the ACTIVE roster only — no point parking cash on a benched
+  // model. If everyone is paused, fall back to splitting across all.
+  const active = q.agents.all().filter((a) => !a.paused);
+  const targets = active.length ? active : q.agents.all();
+  const share = Math.floor((surplus / targets.length) * 100) / 100;
   if (share <= 0) return;
   db.transaction(() => {
-    for (const a of AGENTS) q.creditDeposit.run(share, share, a.id);
+    for (const a of targets) q.creditDeposit.run(share, share, a.id);
   })();
-  console.log(`[engine] deposit detected: +$${surplus.toFixed(2)} → $${share.toFixed(2)} per agent`);
+  console.log(`[engine] deposit detected: +$${surplus.toFixed(2)} → $${share.toFixed(2)} to ${targets.length} active`);
   broadcast('live', { kind: 'deposit', amount: surplus, perAgent: share });
 }
 

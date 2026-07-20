@@ -226,6 +226,21 @@ export function createApp() {
     res.json({ ok: true, id: req.params.id, paused: !!paused });
   });
 
+  // Split the current cash evenly across ACTIVE (non-paused) models. Funds a
+  // just-resumed model from the existing pot — no new money needed. Starting
+  // bankrolls shift with the cash so the transfer isn't counted as PnL.
+  app.post('/api/agents/rebalance', (req, res) => {
+    const active = db.prepare('SELECT * FROM agents WHERE paused = 0').all();
+    if (active.length < 2) return res.status(400).json({ error: 'need 2+ active models to rebalance' });
+    const totalCash = active.reduce((s, a) => s + a.cash, 0);
+    const share = Math.floor((totalCash / active.length) * 100) / 100;
+    const upd = db.prepare('UPDATE agents SET cash = ?, starting_bankroll = MAX(0.01, starting_bankroll + ?) WHERE id = ?');
+    db.transaction(() => {
+      for (const a of active) upd.run(share, share - a.cash, a.id);
+    })();
+    res.json({ ok: true, share, models: active.map((a) => a.id) });
+  });
+
   // Move every OTHER agent's cash into the target's ledger. Starting bankrolls
   // shift by the same amounts so nobody's PnL is rewritten by the transfer.
   app.post('/api/agents/reallocate', (req, res) => {

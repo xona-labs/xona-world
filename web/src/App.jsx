@@ -112,6 +112,13 @@ export default function App() {
     });
     refetch();
   };
+  const rebalance = async () => {
+    const active = agents.filter((a) => !a.paused).map((a) => a.label).join(', ');
+    if (!window.confirm(`Split current cash evenly across active models (${active})?`)) return;
+    const r = await fetch('/api/agents/rebalance', { method: 'POST' });
+    if (!r.ok) alert((await r.json()).error || 'rebalance failed');
+    refetch();
+  };
 
   if (!boot) return <div className="shell"><div className="empty">loading arena…</div></div>;
 
@@ -163,6 +170,9 @@ export default function App() {
               <span className={`dot ${boot.live.cockpitSeenAt && now - boot.live.cockpitSeenAt < 20000 ? 'live' : 'warn'}`} />
               signer {boot.live.cockpitSeenAt && now - boot.live.cockpitSeenAt < 20000 ? 'online' : 'OFFLINE'}
             </div>
+          )}
+          {agents.filter((a) => !a.paused).length >= 2 && (
+            <button className="btn solid" onClick={rebalance} title="Split current cash evenly across active models">⇄ Rebalance</button>
           )}
           {walletAddress && boot.live?.enabled && (
             <button className="btn solid" onClick={() => setFundOpen(true)}>+ Fund</button>
