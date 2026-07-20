@@ -273,8 +273,13 @@ async function executeActions(strat, agent, actions, slate, marketCache, venue) 
         if (opens >= strat.maxOpensPerCycle) continue;
         const m = bySlug.get(a.slug);
         if (!m) continue;
-        // Quotes are from cycle start; don't fill into a window that is closing.
-        if (m.expiration && m.expiration < Date.now() + 45_000) continue;
+        // Need runway for the sign pipeline (cockpit pickup + geofence +
+        // refresh + sign ≈ 60-90s), or paybox rejects the stale quote with a
+        // 400 "can't run the availability check". ~2 min keeps a safe margin
+        // while still allowing a fresh 5-minute window (entered in its first
+        // ~3 min). Paper fills can take any tradeable window.
+        const minRunwayMs = liveMode ? 120_000 : 45_000;
+        if (m.expiration && m.expiration < Date.now() + minRunwayMs) continue;
         const side = a.side === 'no' ? 'no' : 'yes';
         const current = q.agent.get(agent.id);
         const openCount = q.openPositions.all(agent.id).length;
